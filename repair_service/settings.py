@@ -92,10 +92,10 @@ WSGI_APPLICATION = 'repair_service.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'postgres3',  # замените на имя вашей базы данных
+        'NAME': 'postgres',  # замените на имя вашей базы данных
         'USER': 'postgres',  # ваш логин
         'PASSWORD': '123',  # ваш пароль
-        'HOST': '94.141.160.109',
+        'HOST': 'localhost',
         'PORT': '5432',  # по умолчанию
     }
 }
