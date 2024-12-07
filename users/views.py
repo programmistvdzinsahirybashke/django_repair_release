@@ -185,6 +185,7 @@ def admin_orders(request):
         return HttpResponseRedirect(redirect_url)
 
     context = {
+        'title': 'Все заказы',
         'orders': orders,
         'statuses': statuses,
         'available_employees': available_employees,
@@ -290,6 +291,7 @@ def staff_orders(request):
                 pass  # Если статус не найден
 
     context = {
+        'title': 'Мои задачи',
         'orders': orders,
         'order_items': order_items,  # Передаем только заявки текущего сотрудника
         'statuses': statuses,
