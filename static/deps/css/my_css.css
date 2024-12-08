@@ -35,3 +35,13 @@ body {
   border-radius: 15px;
   font-size: 0.7rem;
 }
+
+
+/* Ширина для столбца с сотрудниками */
+.tovar-column {
+    width: 220px; /* Сделаем столбец с сотрудниками шире */
+}
+
+.fullprice-column {
+    width: 120px; /* Сделаем столбец с сотрудниками шире */
+}

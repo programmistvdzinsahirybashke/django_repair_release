@@ -8,7 +8,7 @@ from django.db.models import Q
 
 from carts.models import Cart
 from goods.models import Category
-from users.forms import UserLoginForm, UserRegistrationForm , ProfileForm
+from users.forms import UserLoginForm, UserRegistrationForm, ProfileForm
 
 from orders.models import Order, OrderItem, Status
 
@@ -31,7 +31,6 @@ def login(request):
                 if session_key:
                     Cart.objects.filter(session_key=session_key).update(user=user)
 
-
                 redirect_page = request.POST.get('next', None)
                 if redirect_page and redirect_page != reverse('user:logout'):
                     return HttpResponseRedirect(request.POST.get('next'))
@@ -45,6 +44,7 @@ def login(request):
         'form': form,
     }
     return render(request, 'users/login.html', context=context)
+
 
 def registration(request):
     if request.method == 'POST':
@@ -72,6 +72,7 @@ def registration(request):
     }
     return render(request, 'users/registration.html', context=context)
 
+
 @login_required
 def profile(request):
     if request.method == 'POST':
@@ -90,7 +91,6 @@ def profile(request):
         )
     ).order_by("-id")
 
-
     # Вычисляем общую сумму для каждого заказа
     for order in orders:
         order.total = order.orderitem_set.aggregate(
@@ -100,12 +100,14 @@ def profile(request):
     context = {
         'title': 'Мой профиль',
         'form': form,
-        'orders':orders,
+        'orders': orders,
     }
     return render(request, 'users/profile.html', context=context)
 
+
 def users_cart(request):
     return render(request, 'users/users_cart.html')
+
 
 @login_required
 def logout(request):
@@ -120,6 +122,7 @@ from orders.models import Order, OrderItem
 from orders.models import Order, OrderItem, Status, Employee  # Убедитесь, что Employee импортирован
 from django.http import QueryDict
 
+
 @login_required
 def admin_orders(request):
     if not request.user.is_superuser:
@@ -128,72 +131,123 @@ def admin_orders(request):
     search_query = request.GET.get('search', '')
     status_filter = request.GET.get('status', '')
     sort_order = request.GET.get('sort', 'desc')
-    category_filter = request.GET.get('category', '')
 
-    # Получаем все заказы
-    orders = Order.objects.all().order_by('id')
-    statuses = Status.objects.all().filter(status_category='Заказ')
+    # Получаем заказы с фильтрацией
+    orders = Order.objects.all()
+    statuses = Status.objects.filter(status_category='Заказ')
 
-    # Применяем фильтрацию по поисковому запросу
     if search_query:
         orders = orders.filter(
             Q(id__icontains=search_query) |
             Q(user__username__icontains=search_query)
         )
-
-    # Применяем фильтрацию по статусу
     if status_filter:
         orders = orders.filter(status__id=status_filter)
 
-    # Применяем фильтрацию по категории
-    if category_filter:
-        orders = orders.filter(category__id=category_filter)
+    orders = orders.order_by('-id' if sort_order == 'desc' else 'id')
 
-    # Применяем сортировку
-    if sort_order == 'asc':
-        orders = orders.order_by('id')
-    else:
-        orders = orders.order_by('-id')
-
+    # Собираем доступных сотрудников для каждой услуги
     available_employees = {}
+    employee_statuses = {}
 
     for order in orders:
         for item in order.orderitem_set.all():
-            item_category = item.product.category  # Категория услуги
-            employees_for_item = Employee.objects.filter(category=item_category)
-            available_employees[item.id] = employees_for_item
+            item_category = item.product.category
+            employees = Employee.objects.filter(category=item_category)
+            available_employees[item.id] = employees
 
-    # Обработка назначения сотрудников через POST
+            # Собираем информацию о заявках в статусе "В работе" для каждого сотрудника
+            for employee in employees:
+                in_progress_count = OrderItem.objects.filter(employee=employee, status__status_name="В работе").count()
+                employee_statuses[employee.id] = in_progress_count
+
     if request.method == 'POST':
-        for order in orders:
-            for item in order.orderitem_set.all():
-                employee_id = request.POST.get(f'employee_{item.id}')
-                if employee_id:
-                    employee = Employee.objects.get(id=employee_id)
-                    item.employee = employee
-                    item.save()
+        # Обработка назначения сотрудника на одну услугу
+        if 'assign_single' in request.POST:
+            order_item_id = request.POST.get('order_item_id')
+            employee_id = request.POST.get('employee_id')
+            try:
+                order_item = OrderItem.objects.get(id=order_item_id)
+                employee = Employee.objects.get(id=employee_id)
+                order_item.employee = employee
+                order_item.save()
+            except (OrderItem.DoesNotExist, Employee.DoesNotExist):
+                pass
 
-        # Сохраняем параметры фильтрации и сортировки
-        query_params = QueryDict(mutable=True)
-        query_params['search'] = search_query
-        query_params['status'] = status_filter
-        query_params['sort'] = sort_order
-        query_params['category'] = category_filter
+        # Обработка назначения сотрудников на все услуги
+        elif 'assign_all' in request.POST:
+            order_id = request.POST.get('order_id')
+            try:
+                order = Order.objects.get(id=order_id)
 
-        # Перенаправляем с сохранением параметров
-        redirect_url = f"{request.path}?{query_params.urlencode()}"
-        return HttpResponseRedirect(redirect_url)
+                # Обрабатываем сотрудников для каждой услуги
+                for item in order.orderitem_set.all():
+                    employee_id = request.POST.get(f'employee_{item.id}')
+                    if employee_id:
+                        try:
+                            employee = Employee.objects.get(id=employee_id)
+                            if employee.category == item.product.category:  # Проверяем соответствие категории
+                                item.employee = employee
+                                item.save()
+                        except Employee.DoesNotExist:
+                            pass
+            except Order.DoesNotExist:
+                pass
+
+            messages.success(request, f'Сотрудники назначены (заказ №{order_id})')
+            query_params = QueryDict(mutable=True)
+            query_params['search'] = search_query
+            query_params['status'] = status_filter
+            query_params['sort'] = sort_order
+            redirect_url = f"{request.path}?{query_params.urlencode()}"
+            return HttpResponseRedirect(redirect_url)
+
+        elif 'update_order' in request.POST:
+            order_id = request.POST.get('order_id')
+            try:
+                order = Order.objects.get(id=order_id)
+
+                # Обновляем поля заказа
+                status_id = request.POST.get('status')
+                requires_delivery = request.POST.get('requires_delivery')
+                delivery_address = request.POST.get('delivery_address')
+                comment = request.POST.get('comment')
+
+                # Обновление статуса
+                if status_id:
+                    order.status_id = status_id
+
+                # Обновление адреса доставки
+                if delivery_address:
+                    order.delivery_address = delivery_address
+
+                # Обновление комментария
+                if comment:
+                    order.comment = comment
+
+                order.save()  # Сохраняем изменения
+                messages.success(request, f'Данные обновлены и сохранены (заказ №{order_id})')
+                query_params = QueryDict(mutable=True)
+                query_params['search'] = search_query
+                query_params['status'] = status_filter
+                query_params['sort'] = sort_order
+                redirect_url = f"{request.path}?{query_params.urlencode()}"
+                return HttpResponseRedirect(redirect_url)
+
+            except Order.DoesNotExist:
+                pass
+
 
     context = {
         'title': 'Все заказы',
         'orders': orders,
         'statuses': statuses,
         'available_employees': available_employees,
+        'employee_statuses': employee_statuses,
         'filters': {
             'search_query': search_query,
             'status_filter': status_filter,
             'sort_order': sort_order,
-            'category_filter': category_filter,
         },
     }
 
@@ -201,6 +255,7 @@ def admin_orders(request):
 
 
 from django.http import HttpResponseRedirect
+
 
 def update_employee(request, order_id):
     order = Order.objects.get(id=order_id)
@@ -264,8 +319,10 @@ def staff_orders(request):
         order_item_id = request.POST.get('order_item_id')
         new_status_name = request.POST.get('new_status')
 
+
         if order_item_id and new_status_name:
             try:
+                order_id = request.POST.get('order_id')
                 # Получаем заявку, для которой нужно изменить статус
                 order_item = OrderItem.objects.get(id=order_item_id, employee=current_employee)
 
@@ -278,9 +335,15 @@ def staff_orders(request):
                 # Если статус "В работе", сбрасываем дату выполнения
                 if new_status.status_name == "В работе":
                     order_item.work_ended_datetime = None
+                    messages.success(request, f'Отменено выполнение задачи (Заказ №{order_id} заявка №{order_item_id})')
+
+                if new_status.status_name == "Выполнено":
+
+                    messages.success(request, f'Задача выполнена(Заказ №{order_id} заявка №{order_item_id})')
 
                 # Сохраняем изменения
                 order_item.save()
+
 
                 # Перенаправляем с сохранением параметров
                 redirect_url = f"{request.path}?search={search_query}&status={status_filter}&sort={sort_order}"
